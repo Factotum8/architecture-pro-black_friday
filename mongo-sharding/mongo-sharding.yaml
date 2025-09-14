@@ -1,0 +1,133 @@
+version: "3.9"
+
+# MongoDB sharded cluster (dev-friendly) with 2 shards
+# Layout
+# - 1x config server (single-member replset for simplicity)
+# - 2x shards (each a single-member replica set)
+# - 1x mongos router
+# - 3x init jobs to initiate the replsets + 1x init job to add shards
+# Notes
+# - This is great for local development. For production, use multi-member replica sets
+#   for each shard and the config server, add keyfile/x.509 auth, and proper storage.
+
+services:
+  # -------------------- CONFIG SERVER --------------------
+  configsvr:
+    image: mongo:7.0
+    container_name: configsvr
+    command: ["mongod", "--configsvr", "--replSet", "configReplSet", "--port", "27019", "--bind_ip_all"]
+    networks: [shardnet]
+    volumes:
+      - configdb:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27019", "--eval", "db.adminCommand({ ping: 1 })"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  init-configrs:
+    image: mongo:7.0
+    container_name: init-configrs
+    depends_on:
+      configsvr:
+        condition: service_healthy
+    networks: [shardnet]
+    restart: "no"
+    entrypoint: ["bash", "-lc", "mongosh --host configsvr --port 27019 --eval 'rs.initiate({_id:\"configReplSet\", configsvr:true, members:[{_id:0, host:\"configsvr:27019\"}]})' || true"]
+
+  # -------------------- SHARD 1 --------------------
+  shard1:
+    image: mongo:7.0
+    container_name: shard1
+    command: ["mongod", "--shardsvr", "--replSet", "shard1RS", "--port", "27018", "--bind_ip_all"]
+    networks: [shardnet]
+    volumes:
+      - shard1db:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27018", "--eval", "db.adminCommand({ ping: 1 })"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  init-shard1rs:
+    image: mongo:7.0
+    container_name: init-shard1rs
+    depends_on:
+      shard1:
+        condition: service_healthy
+    networks: [shardnet]
+    restart: "no"
+    entrypoint: ["bash", "-lc", "mongosh --host shard1 --port 27018 --eval 'rs.initiate({_id:\"shard1RS\", members:[{_id:0, host:\"shard1:27018\"}]})' || true"]
+
+  # -------------------- SHARD 2 --------------------
+  shard2:
+    image: mongo:7.0
+    container_name: shard2
+    command: ["mongod", "--shardsvr", "--replSet", "shard2RS", "--port", "27018", "--bind_ip_all"]
+    networks: [shardnet]
+    volumes:
+      - shard2db:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27018", "--eval", "db.adminCommand({ ping: 1 })"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  init-shard2rs:
+    image: mongo:7.0
+    container_name: init-shard2rs
+    depends_on:
+      shard2:
+        condition: service_healthy
+    networks: [shardnet]
+    restart: "no"
+    entrypoint: ["bash", "-lc", "mongosh --host shard2 --port 27018 --eval 'rs.initiate({_id:\"shard2RS\", members:[{_id:0, host:\"shard2:27018\"}]})' || true"]
+
+  # -------------------- MONGOS ROUTER --------------------
+  mongos:
+    image: mongo:7.0
+    container_name: mongos
+    depends_on:
+      configsvr:
+        condition: service_healthy
+      shard1:
+        condition: service_healthy
+      shard2:
+        condition: service_healthy
+    command: ["mongos", "--configdb", "configReplSet/configsvr:27019", "--bind_ip_all", "--port", "27017"]
+    ports:
+      - "27017:27017"  # connect here from your apps
+    networks: [shardnet]
+    healthcheck:
+      test: ["CMD", "mongosh", "--port", "27017", "--eval", "db.adminCommand({ ping: 1 })"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  # -------------------- ADD SHARDS TO ROUTER --------------------
+  init-router:
+    image: mongo:7.0
+    container_name: init-router
+    depends_on:
+      mongos:
+        condition: service_healthy
+      init-configrs:
+        condition: service_completed_successfully
+      init-shard1rs:
+        condition: service_completed_successfully
+      init-shard2rs:
+        condition: service_completed_successfully
+    networks: [shardnet]
+    restart: "no"
+    entrypoint: ["bash", "-lc", "\
+      echo 'Waiting a moment for replsets to settle...' && sleep 3 && \
+      mongosh --host mongos --port 27017 --eval 'sh.addShard(\"shard1RS/shard1:27018\"); sh.addShard(\"shard2RS/shard2:27018\"); printjson(sh.status())' || true \
+    "]
+
+networks:
+  shardnet: {}
+
+volumes:
+  configdb: {}
+  shard1db: {}
+  shard2db: {}
