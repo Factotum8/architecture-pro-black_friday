@@ -1,0 +1,18 @@
+@startuml
+
+' configuration
+hide circle
+skinparam linetype ortho
+
+' comment
+entity "Products"{
+ id: number
+ --
+ client_id: number
+ title: str
+ good_category: str
+ price: number
+ remaining_product: object
+ extra_attrs: object
+}
+@enduml

@@ -184,6 +184,111 @@ services:
       mongosh --host mongos --port 27017 --eval 'sh.addShard(\"shard1RS/shard1:27018,shard1b:27018,shard1c:27018\"); sh.addShard(\"shard2RS/shard2:27018,shard2b:27018,shard2c:27018\"); printjson(sh.status())' || true \
     "]
 
+  pymongo_api:
+    container_name: pymongo_api
+    build:
+      context: api_app
+      dockerfile: Dockerfile
+    depends_on:
+      - mongos
+    networks: [shardnet]
+    ports:
+      - 8080:8080
+    environment:
+      MONGODB_URL: "mongodb://mongos"
+      MONGODB_DATABASE_NAME: "somedb"
+      REDIS_URL: "redis://redis-node-1:7001"
+
+# Redis Cluster (3 nodes: 3 masters, 0 replicas)
+# - Minimal cluster suitable for local dev
+# - Exposes ports 7001..7003 on localhost
+# - AOF persistence enabled
+# - Init job auto-creates the cluster with --cluster-replicas 0
+
+  redis-node-1:
+    image: redis:7-alpine
+    container_name: redis-node-1
+    command: [
+      "redis-server", "--port", "7001",
+      "--cluster-enabled", "yes",
+      "--cluster-config-file", "/data/nodes.conf",
+      "--cluster-node-timeout", "5000",
+      "--appendonly", "yes",
+      "--protected-mode", "no",
+      "--cluster-announce-port", "7001",
+      "--cluster-announce-bus-port", "17001"
+    ]
+    ports: ["7001:7001"]
+    networks: [shardnet]
+    volumes: ["redis1:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 7001 ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  redis-node-2:
+    image: redis:7-alpine
+    container_name: redis-node-2
+    command: [
+      "redis-server", "--port", "7002",
+      "--cluster-enabled", "yes",
+      "--cluster-config-file", "/data/nodes.conf",
+      "--cluster-node-timeout", "5000",
+      "--appendonly", "yes",
+      "--protected-mode", "no",
+      "--cluster-announce-port", "7002",
+      "--cluster-announce-bus-port", "17002"
+    ]
+    ports: ["7002:7002"]
+    networks: [shardnet]
+    volumes: ["redis2:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 7002 ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  redis-node-3:
+    image: redis:7-alpine
+    container_name: redis-node-3
+    command: [
+      "redis-server", "--port", "7003",
+      "--cluster-enabled", "yes",
+      "--cluster-config-file", "/data/nodes.conf",
+      "--cluster-node-timeout", "5000",
+      "--appendonly", "yes",
+      "--protected-mode", "no",
+      "--cluster-announce-port", "7003",
+      "--cluster-announce-bus-port", "17003"
+    ]
+    ports: ["7003:7003"]
+    networks: [shardnet]
+    volumes: ["redis3:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 7003 ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  init-redis-cluster:
+    image: redis:7-alpine
+    container_name: init-redis-cluster
+    depends_on:
+      redis-node-1:
+        condition: service_healthy
+      redis-node-2:
+        condition: service_healthy
+      redis-node-3:
+        condition: service_healthy
+    networks: [shardnet]
+    restart: "no"
+    entrypoint: ["sh", "-c", "echo yes | redis-cli --cluster create \
+      redis-node-1:7001 redis-node-2:7002 redis-node-3:7003 \
+      --cluster-replicas 0 && \
+      echo 'Redis Cluster (3-node) created' "]
+
+
 networks:
   shardnet: {}
 
@@ -195,3 +300,6 @@ volumes:
   shard2db: {}
   shard2db_b: {}
   shard2db_c: {}
+  redis1: {}
+  redis2: {}
+  redis3: {}

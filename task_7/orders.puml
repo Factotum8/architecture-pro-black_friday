@@ -1,0 +1,18 @@
+@startuml
+
+' configuration
+hide circle
+skinparam linetype ortho
+
+' comment
+entity "Orders"{
+ id: number
+ --
+ client_id: number
+ creat_datetime: datetime
+ goods_list: object
+ status: number
+ total_amount: number
+ geo_zone: string
+}
+@enduml
