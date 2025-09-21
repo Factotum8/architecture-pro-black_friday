@@ -1,0 +1,19 @@
+@startuml
+
+' configuration
+hide circle
+skinparam linetype ortho
+
+' comment
+entity "Carts"{
+ id: number
+ --
+ user_id: number
+ session_id: number
+ items: { product_id, quantity }
+ status: "active" | "ordered" | "abandoned"
+ created_at: datetime
+ updated_at: datetime
+ expires_at: datetime
+}
+@enduml
